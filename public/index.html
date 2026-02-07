@@ -12,13 +12,22 @@
 <body>
 
     <header>
-        <h1>Tech Conference 2026</h1>
-        <p>A one-day event packed with inspiring talks.</p>
-        <div class="filter-container">
-            <label for="category-filter">Filter by Category:</label>
-            <select id="category-filter">
-                <option value="all">All Categories</option>
-            </select>
+        <div class="header-content">
+            <h1>Tech Conference 2026</h1>
+            <p>An event series packed with inspiring talks.</p>
+        </div>
+        <div class="filter-controls">
+            <div class="filter-container">
+                <label for="category-filter">Filter by Category:</label>
+                <select id="category-filter">
+                    <option value="all">All Categories</option>
+                </select>
+            </div>
+            <div class="filter-container">
+                <label for="date-filter">Filter by Date:</label>
+                <input type="date" id="date-filter">
+                <button id="clear-date-filter">Clear</button>
+            </div>
         </div>
     </header>
 

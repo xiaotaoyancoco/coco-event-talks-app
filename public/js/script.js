@@ -1,24 +1,45 @@
 document.addEventListener('DOMContentLoaded', () => {
     const scheduleContainer = document.getElementById('schedule-container');
     const categoryFilter = document.getElementById('category-filter');
+    const dateFilter = document.getElementById('date-filter');
+    const clearDateFilterBtn = document.getElementById('clear-date-filter');
 
     let allTalks = [];
     const allCategories = new Set();
+    const today = new Date();
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(today.getDate() - 6);
 
-    // Fetch talk data from the API
+    const toYYYYMMDD = (date) => date.toISOString().split('T')[0];
+
+    // --- Initialize Date Filter ---
+    dateFilter.max = toYYYYMMDD(today);
+    dateFilter.min = toYYYYMMDD(sevenDaysAgo);
+
+    // --- Fetch Data and Initial Render ---
     fetch('/api/talks')
         .then(response => response.json())
         .then(talks => {
-            allTalks = talks;
-            renderSchedule(allTalks);
+            allTalks = talks.sort((a, b) => new Date(b.date) - new Date(a.date));
             populateCategoryFilter();
+            filterAndRender();
         });
 
+    // --- Event Listeners ---
+    categoryFilter.addEventListener('change', filterAndRender);
+    dateFilter.addEventListener('change', filterAndRender);
+    clearDateFilterBtn.addEventListener('click', () => {
+        dateFilter.value = '';
+        filterAndRender();
+    });
+
+    // --- Helper Functions ---
+    const formatTime = (date) => date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    // --- UI Population Functions ---
     function populateCategoryFilter() {
-        allTalks.forEach(talk => {
-            talk.categories.forEach(category => allCategories.add(category));
-        });
-
+        allTalks.forEach(talk => talk.categories.forEach(category => allCategories.add(category)));
+        categoryFilter.innerHTML = '<option value="all">All Categories</option>';
         allCategories.forEach(category => {
             const option = document.createElement('option');
             option.value = category;
@@ -27,45 +48,74 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function formatTime(date) {
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    // --- Core Filtering and Rendering Logic ---
+    function filterAndRender() {
+        const selectedCategory = categoryFilter.value;
+        const selectedDate = dateFilter.value;
+
+        const filteredTalks = allTalks.filter(talk => {
+            const talkDate = new Date(talk.date + "T00:00:00"); // Use T00:00:00 to avoid timezone issues
+            const matchesCategory = selectedCategory === 'all' || talk.categories.includes(selectedCategory);
+
+            if (selectedDate) {
+                return talk.date === selectedDate && matchesCategory;
+            }
+            
+            const dateInInitialRange = talkDate >= sevenDaysAgo && talkDate <= today;
+            return dateInInitialRange && matchesCategory;
+        });
+
+        renderSchedule(filteredTalks);
     }
 
     function renderSchedule(talksToRender) {
-        scheduleContainer.innerHTML = ''; // Clear existing schedule
+        scheduleContainer.innerHTML = '';
+        if (talksToRender.length === 0) {
+            scheduleContainer.innerHTML = '<p style="text-align: center;">No talks match the selected criteria.</p>';
+            return;
+        }
 
-        let currentTime = new Date();
-        currentTime.setHours(10, 0, 0, 0); // Event starts at 10:00 AM
+        const talksByDate = talksToRender.reduce((acc, talk) => {
+            (acc[talk.date] = acc[talk.date] || []).push(talk);
+            return acc;
+        }, {});
 
-        talksToRender.forEach((talk, index) => {
-            const startTime = new Date(currentTime);
-            const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+        const sortedDates = Object.keys(talksByDate).sort((a, b) => new Date(b) - new Date(a));
 
-            // Create and append talk item
-            scheduleContainer.appendChild(createTalkElement(talk, startTime, endTime));
-            
-            currentTime = endTime;
+        sortedDates.forEach(dateStr => {
+            const dateHeading = document.createElement('h2');
+            dateHeading.className = 'date-heading';
+            dateHeading.textContent = new Date(dateStr + "T00:00:00").toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            scheduleContainer.appendChild(dateHeading);
 
-            // Handle breaks
-            if (index === 2) { // Lunch break after the 3rd talk
-                const lunchStartTime = new Date(currentTime);
-                const lunchEndTime = new Date(lunchStartTime.getTime() + 60 * 60 * 1000);
-                scheduleContainer.appendChild(createBreakElement('Lunch Break', lunchStartTime, lunchEndTime, true));
-                currentTime = lunchEndTime;
-            } else if (index < talksToRender.length - 1) { // Transition break
-                const breakStartTime = new Date(currentTime);
-                const breakEndTime = new Date(breakStartTime.getTime() + 10 * 60 * 1000);
-                scheduleContainer.appendChild(createBreakElement('Transition', breakStartTime, breakEndTime, false));
-                currentTime = breakEndTime;
-            }
+            const talksForDay = talksByDate[dateStr];
+            let currentTime = new Date(dateStr + "T10:00:00"); // Start each day at 10:00 AM
+
+            talksForDay.forEach((talk, index) => {
+                const startTime = new Date(currentTime);
+                const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+                scheduleContainer.appendChild(createTalkElement(talk, startTime, endTime));
+                currentTime = endTime;
+
+                // Handle breaks for the specific day
+                if (index === 2) { // Lunch break after the 3rd talk
+                    const lunchStartTime = new Date(currentTime);
+                    const lunchEndTime = new Date(lunchStartTime.getTime() + 60 * 60 * 1000);
+                    scheduleContainer.appendChild(createBreakElement('Lunch Break', lunchStartTime, lunchEndTime, true));
+                    currentTime = lunchEndTime;
+                } else if (index < talksForDay.length - 1) { // Transition break
+                    const breakStartTime = new Date(currentTime);
+                    const breakEndTime = new Date(breakStartTime.getTime() + 10 * 60 * 1000);
+                    scheduleContainer.appendChild(createBreakElement('Transition', breakStartTime, breakEndTime, false));
+                    currentTime = breakEndTime;
+                }
+            });
         });
     }
 
     function createTalkElement(talk, startTime, endTime) {
         const item = document.createElement('div');
         item.className = 'schedule-item';
-        item.dataset.categories = talk.categories.join(',');
-
         item.innerHTML = `
             <div class="time">${formatTime(startTime)} - ${formatTime(endTime)}</div>
             <h2>${talk.title}</h2>
@@ -80,25 +130,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function createBreakElement(title, startTime, endTime, isLunch) {
         const breakItem = document.createElement('div');
-        breakItem.className = isLunch ? 'schedule-item lunch' : 'schedule-item break';
+        // Re-add classes from original implementation for styling
+        const baseClass = 'schedule-item';
+        const typeClass = isLunch ? 'lunch' : 'break';
+        // The original implementation had unique styling for breaks, which was lost.
+        // Let's add it back via CSS or directly, but for now, we add classes.
+        // We will need to add .lunch and .break styles to css file.
+        breakItem.className = `${baseClass} ${typeClass}`;
+        
         breakItem.innerHTML = `
             <div class="time">${formatTime(startTime)} - ${formatTime(endTime)}</div>
-            <p>${title}</p>
+            <p style="font-weight: bold;">${title}</p>
         `;
         return breakItem;
     }
-
-    // Event listener for the category filter
-    categoryFilter.addEventListener('change', (e) => {
-        const selectedCategory = e.target.value;
-        const talkElements = document.querySelectorAll('#schedule-container .schedule-item:not(.break):not(.lunch)');
-
-        talkElements.forEach(talkElement => {
-            if (selectedCategory === 'all' || talkElement.dataset.categories.includes(selectedCategory)) {
-                talkElement.classList.remove('hidden');
-            } else {
-                talkElement.classList.add('hidden');
-            }
-        });
-    });
 });
