@@ -49,7 +49,7 @@ const generateAllTalks = () => Array.from({ length: 7 }, (_, i) => generateDayOf
 async function initializeDatabase() {
     const talksSnapshot = await talksCollection.limit(1).get();
     if (talksSnapshot.empty) {
-        console.log('Database is empty. Populating with initial mock data...');
+        console.log('Talks collection is empty. Populating...');
         const initialTalks = generateAllTalks();
         const talkBatch = db.batch();
         initialTalks.forEach(talk => {
@@ -57,16 +57,24 @@ async function initializeDatabase() {
             talkBatch.set(docRef, talk);
         });
         await talkBatch.commit();
-        
-        // Also populate the categories collection
-        const initialCategories = new Set(initialTalks.flatMap(talk => talk.categories));
+        console.log('Talks collection seeded.');
+    }
+    const categoriesSnapshot = await categoriesCollection.limit(1).get();
+    if (categoriesSnapshot.empty) {
+        console.log('Categories collection is empty. Populating from existing talks...');
+        const allTalksSnapshot = await talksCollection.get();
+        const allTalks = [];
+        allTalksSnapshot.forEach(doc => allTalks.push(doc.data()));
+        const allCategories = new Set(allTalks.flatMap(talk => talk.categories));
         const categoryBatch = db.batch();
-        initialCategories.forEach(categoryName => {
-            const docRef = categoriesCollection.doc(categoryName); // Use category name as ID for easy lookup
-            categoryBatch.set(docRef, { name: categoryName });
+        allCategories.forEach(categoryName => {
+            if (categoryName) {
+                const docRef = categoriesCollection.doc(categoryName);
+                categoryBatch.set(docRef, { name: categoryName });
+            }
         });
         await categoryBatch.commit();
-        console.log('Database initialized successfully.');
+        console.log('Categories collection seeded.');
     }
 }
 
@@ -78,7 +86,6 @@ app.get('/api/talks', async (req, res) => {
     res.json(talks);
 });
 
-// NEW: Endpoint to get all unique categories
 app.get('/api/categories', async (req, res) => {
     const snapshot = await categoriesCollection.get();
     const categories = [];
@@ -86,26 +93,31 @@ app.get('/api/categories', async (req, res) => {
     res.json(categories.sort());
 });
 
+// FIXED POST endpoint
 app.post('/api/talks', async (req, res) => {
     const newTalk = req.body;
-    if (!newTalk || !newTalk.title || !newTalk.date) {
+    if (!newTalk || !newTalk.title || !newTalk.date || !newTalk.categories) {
         return res.status(400).json({ error: 'Invalid talk data provided.' });
     }
 
-    // Use a transaction to save talk and update categories collection
     try {
         const talkRef = talksCollection.doc();
         await db.runTransaction(async (transaction) => {
-            transaction.set(talkRef, newTalk);
+            // 1. Perform all reads first
+            const categoryRefs = newTalk.categories.map(name => categoriesCollection.doc(name));
+            const categoryDocs = await transaction.getAll(...categoryRefs);
+            
+            // 2. Now, perform all writes
+            transaction.set(talkRef, newTalk); // Write the new talk
 
-            // For each category in the new talk, check if it exists in the categories collection
-            for (const categoryName of newTalk.categories) {
-                const categoryRef = categoriesCollection.doc(categoryName);
-                const categoryDoc = await transaction.get(categoryRef);
-                if (!categoryDoc.exists) {
-                    transaction.set(categoryRef, { name: categoryName });
+            // Write only the categories that don't exist yet
+            categoryDocs.forEach((doc, index) => {
+                if (!doc.exists) {
+                    const newCategoryName = newTalk.categories[index];
+                    const newCategoryRef = categoriesCollection.doc(newCategoryName);
+                    transaction.set(newCategoryRef, { name: newCategoryName });
                 }
-            }
+            });
         });
         res.status(201).json({ id: talkRef.id, ...newTalk });
     } catch (e) {
@@ -114,14 +126,13 @@ app.post('/api/talks', async (req, res) => {
     }
 });
 
+
 app.delete('/api/talks/:id', async (req, res) => {
-    // Note: This simplified version doesn't clean up orphan categories.
-    // A full implementation would require checking if any other talk uses the category
-    // before deleting it from the 'categories' collection, which is more complex.
     const talkId = req.params.id;
     await talksCollection.doc(talkId).delete();
     res.status(204).send();
 });
+
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
