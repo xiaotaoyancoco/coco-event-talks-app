@@ -1,0 +1,13 @@
+# Docker specific
+.dockerignore
+Dockerfile
+
+# Git
+.git
+.gitignore
+
+# Node
+node_modules
+
+# App Data
+db.json

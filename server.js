@@ -1,15 +1,17 @@
 const express = require('express');
 const path = require('path');
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
+const { Firestore } = require('@google-cloud/firestore');
 
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
-const PORT = process.env.PORT || 3000;
+app.use(express.json());
+const PORT = process.env.PORT || 8080;
 
-// --- Database Setup ---
-const adapter = new JSONFile('db.json');
-const db = new Low(adapter);
+// --- Firestore Setup ---
+const db = new Firestore({
+    projectId: 'my-tech-486713', // Make sure this matches your project ID
+});
+const talksCollection = db.collection('talks');
+
 
 // --- Mock Data Generation (for initial setup) ---
 const daysAgo = (days) => {
@@ -17,28 +19,13 @@ const daysAgo = (days) => {
     date.setDate(date.getDate() - days);
     return date.toISOString().split('T')[0];
 };
-const titles = [
-    "The Quantum Leap in Machine Learning", "Building Resilient Microservices", "Modern Frontend: Beyond Frameworks", "The Art of Data Storytelling",
-    "Securing the Cloud-Native World", "Ethical AI: Navigating the Grey Areas", "The Future of Edge Computing", "Advanced CSS Grid Techniques",
-    "Web Assembly: The Next Frontier", "Deep Dive into Serverless", "Optimizing Database Performance", "Introduction to Federated Learning"
-];
-const speakers = [
-    ["Dr. Evelyn Reed"], ["Johnathan Chen", "Maria Garcia"], ["Samantha Wu"], ["David Lee"],
-    ["Aisha Khan", "Ben Carter"], ["Dr. Kenji Tanaka"], ["Lena Petrova"], ["Marco Rossi"]
-];
-const categories = [
-    ["AI", "ML"], ["Backend", "Architecture"], ["Frontend", "Web"], ["Data", "Analytics"],
-    ["Security", "Cloud"], ["AI", "Ethics"], ["Cloud", "IoT"], ["CSS", "Frontend"]
-];
-const descriptions = [
-    "A deep dive into the patterns and practices for creating robust, fault-tolerant systems.", "Explore how new technologies are set to revolutionize the field for the next decade.",
-    "A thought-provoking session on our responsibilities as developers in a changing world.", "Learn how to turn raw data into compelling narratives that drive decision-making.",
-    "An overview of the current landscape and how to defend against emerging threats.", "Discover the latest native browser APIs that can replace heavy JavaScript frameworks."
-];
-
 const generateDayOfTalks = (dateString) => {
+    // ... [Same data generation logic as before]
     const dailyTalks = [];
     let currentTime = new Date(`${dateString}T10:00:00`);
+    const titles = ["Quantum Leap", "Resilient Microservices", "Modern Frontend", "Data Storytelling", "Cloud-Native Security", "Ethical AI"];
+    const speakers = [["Dr. Reed"], ["J. Chen"], ["S. Wu"], ["D. Lee"], ["A. Khan"], ["Dr. Tanaka"]];
+    const categories = [["AI"], ["Backend"], ["Frontend"], ["Data"], ["Security"], ["Ethics"]];
     for (let i = 0; i < 6; i++) {
         const startTime = new Date(currentTime);
         const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
@@ -46,77 +33,62 @@ const generateDayOfTalks = (dateString) => {
             date: dateString,
             startTime: startTime.toISOString(),
             endTime: endTime.toISOString(),
-            title: titles[(i * 2) % titles.length],
-            speakers: speakers[i % speakers.length],
-            categories: categories[i % categories.length],
-            description: descriptions[i % descriptions.length]
+            title: titles[i],
+            speakers: speakers[i],
+            categories: categories[i],
+            description: "A deep dive into the patterns and practices."
         });
-        if (i === 2) {
-            currentTime.setTime(endTime.getTime() + 60 * 60 * 1000);
-        } else {
-            currentTime.setTime(endTime.getTime() + 10 * 60 * 1000);
-        }
+        currentTime.setTime(endTime.getTime() + (i === 2 ? 60 * 60 * 1000 : 10 * 60 * 1000));
     }
     return dailyTalks;
 };
 const generateAllTalks = () => Array.from({ length: 7 }, (_, i) => generateDayOfTalks(daysAgo(i))).flat();
 
+
 // --- Database Initialization ---
 async function initializeDatabase() {
-    await db.read();
-    if (!db.data || !db.data.talks) {
-        db.data = { talks: [] };
-        await db.write();
-    }
-    if (db.data.talks.length === 0) {
-        console.log('Database is empty. Populating with initial mock data...');
+    const snapshot = await talksCollection.limit(1).get();
+    if (snapshot.empty) {
+        console.log('Talks collection is empty. Populating with initial mock data...');
         const initialTalks = generateAllTalks();
-        let nextId = 1;
-        const talksWithIds = initialTalks.map(talk => ({ id: nextId++, ...talk }));
-        db.data.talks = talksWithIds;
-        await db.write();
+        const batch = db.batch();
+        initialTalks.forEach(talk => {
+            const docRef = talksCollection.doc(); // Firestore generates an ID
+            batch.set(docRef, talk);
+        });
+        await batch.commit();
         console.log('Database initialized successfully.');
     }
 }
 
 // --- Server Endpoints ---
+// GET all talks
 app.get('/api/talks', async (req, res) => {
-    await db.read();
-    res.json(db.data.talks || []);
+    const snapshot = await talksCollection.get();
+    const talks = [];
+    snapshot.forEach(doc => {
+        talks.push({ id: doc.id, ...doc.data() });
+    });
+    res.json(talks);
 });
 
+// POST a new talk
 app.post('/api/talks', async (req, res) => {
     const newTalk = req.body;
     if (!newTalk || !newTalk.title || !newTalk.date) {
         return res.status(400).json({ error: 'Invalid talk data provided.' });
     }
-    await db.read();
-    const lastId = db.data.talks.length > 0 ? Math.max(...db.data.talks.map(t => t.id)) : 0;
-    const talkWithId = { id: lastId + 1, ...newTalk };
-    db.data.talks.push(talkWithId);
-    await db.write();
-    res.status(201).json(talkWithId);
+    const docRef = await talksCollection.add(newTalk);
+    res.status(201).json({ id: docRef.id, ...newTalk });
 });
 
 // DELETE a talk by ID
 app.delete('/api/talks/:id', async (req, res) => {
-    const talkId = parseInt(req.params.id, 10);
-    if (isNaN(talkId)) {
-        return res.status(400).json({ error: 'Invalid ID format.' });
-    }
-
-    await db.read();
-    const talkIndex = db.data.talks.findIndex(t => t.id === talkId);
-
-    if (talkIndex === -1) {
-        return res.status(404).json({ error: 'Talk not found.' });
-    }
-
-    db.data.talks.splice(talkIndex, 1);
-    await db.write();
-    
-    res.status(204).send(); // No Content
+    const talkId = req.params.id;
+    await talksCollection.doc(talkId).delete();
+    res.status(204).send();
 });
+
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));

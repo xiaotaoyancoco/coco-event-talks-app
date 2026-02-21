@@ -20,6 +20,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const ALL_SLOTS = ["10:00:00", "11:10:00", "12:20:00", "14:20:00", "15:30:00", "16:40:00"];
     const toYYYYMMDD = (date) => new Date(date).toISOString().split('T')[0];
 
+    // Helper function to format time as "HH:MM AM/PM" without timezone conversion
+    const formatAsWallTime = (isoString) => {
+        const timePart = isoString.split('T')[1].substring(0, 5); // "HH:MM"
+        const [hours, minutes] = timePart.split(':');
+        const numericHours = parseInt(hours, 10);
+        
+        const ampm = numericHours >= 12 ? 'PM' : 'AM';
+        const formattedHours = numericHours % 12 || 12; // Convert 0 to 12 for 12 AM/PM
+        return `${formattedHours}:${minutes} ${ampm}`;
+    };
+
+
     // --- Initial Setup ---
     fetchAndRender();
 
@@ -97,7 +109,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const startTime = new Date(`${tomorrowStr}T${slot}`);
                 const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
                 option.value = slot;
-                option.textContent = `${startTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} - ${endTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+                // **UPDATED**: Use formatAsWallTime
+                option.textContent = `${formatAsWallTime(startTime.toISOString())} - ${formatAsWallTime(endTime.toISOString())}`;
                 timeSelect.appendChild(option);
             });
         } else {
@@ -168,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function handleScheduleClick(e) {
         if (e.target.classList.contains('delete-talk-btn')) {
-            const talkId = parseInt(e.target.dataset.id, 10);
+            const talkId = e.target.dataset.id;
             if (confirm('Are you sure you want to delete this talk?')) deleteTalk(talkId);
         }
     }
@@ -259,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
             deleteButtonHTML = `<button class="delete-talk-btn" data-id="${talk.id}">Delete</button>`;
         }
         item.innerHTML = `
-            <div class="time">${talkStartTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} - ${new Date(talk.endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
+            <div class="time">${formatAsWallTime(talk.startTime)} - ${formatAsWallTime(talk.endTime)}</div>
             <h2>${talk.title}</h2>
             <div class="speakers">${talk.speakers.join(', ')}</div>
             <p>${talk.description}</p>
