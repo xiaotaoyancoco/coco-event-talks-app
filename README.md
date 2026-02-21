@@ -1,21 +1,21 @@
 # Tech Event Website
 
-This project is a single-page application to display and manage the schedule for a multi-day technical conference. It is built with a Node.js backend, a lightweight JSON database, and standard HTML, CSS, and JavaScript on the front end.
+This project is a single-page application to display and manage the schedule for a multi-day technical conference. It is built with a Node.js backend, Google Cloud Firestore for data persistence, and standard HTML, CSS, and JavaScript on the front end.
 
 ## Features
 
-- **Dynamic Schedule:** The event schedule is dynamically rendered from a persistent JSON database.
-- **Data Persistence:** Uses **`lowdb`** to store all talk data in a `db.json` file, making data persistent across server restarts. The database is seeded with mock data on the first run.
-- **Date & Category Filtering:** Users can filter the displayed talks by date and/or by category using dynamic dropdown menus.
+- **Dynamic Schedule:** The event schedule is dynamically rendered from the Firestore database.
+- **Cloud Data Persistence:** Uses **Google Cloud Firestore** to store all talk and category data, making it persistent, scalable, and available across all running instances. The database is seeded with mock data on the first run.
+- **Optimized Filtering:** Talk filtering by date and category is highly performant, using a dedicated `categories` collection in the database.
 - **Create Talks:** Click the **"+ Add Talk"** button to open a form and schedule a new talk for the next day.
     - The form intelligently shows only the available time slots for that day.
-    - The category input allows filtering from existing categories or creating new ones on the fly.
+    - The category input allows filtering from existing categories or creating new ones on the fly, which are then persisted in the database.
 - **Delete Talks:** A **"Delete"** button appears on all talks scheduled for a future time, allowing for their removal.
 
 ## Tech Stack
 
 - **Backend:** Node.js, Express.js
-- **Database:** `lowdb` (flat-file JSON database)
+- **Database:** Google Cloud Firestore
 - **Frontend:** HTML5, CSS3, JavaScript (ES6+)
 
 ---
@@ -24,7 +24,8 @@ This project is a single-page application to display and manage the schedule for
 
 ```
 /tech-event-website
-├── db.json                # JSON file used by lowdb for data storage
+├── .dockerignore          # Specifies files to be ignored by Docker
+├── Dockerfile             # Instructions to build the Docker image
 ├── .gitignore             # Specifies files to be ignored by Git
 ├── node_modules/          # Contains all project dependencies
 ├── package.json           # Lists project dependencies and defines scripts
@@ -43,9 +44,12 @@ This project is a single-page application to display and manage the schedule for
 
 ## How to Run This Project
 
-1.  **Prerequisites:** Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
+1.  **Prerequisites:** 
+    - Make sure you have [Node.js](https://nodejs.org/) installed.
+    - You must have the [Google Cloud SDK](https://cloud.google.com/sdk/install) installed and authenticated (`gcloud auth application-default login`).
+    - You need a Google Cloud project with Firestore enabled.
 
-2.  **Install Dependencies:** Open your terminal in the project root directory and run the following command to install the necessary packages:
+2.  **Install Dependencies:** Open your terminal in the project root directory and run the following command:
     ```bash
     npm install
     ```
@@ -54,9 +58,9 @@ This project is a single-page application to display and manage the schedule for
     ```bash
     npm start
     ```
-    You will see a confirmation message in the terminal: `Server is running on http://localhost:3000`. On the very first run, it will also log that it is seeding the database.
+    You will see a confirmation message in the terminal: `Server is running on http://localhost:8080`. On the very first run against an empty database, it will also log that it is seeding Firestore.
 
 4.  **View in Browser:** Open your web browser and navigate to the following address:
-    [http://localhost:3000](http://localhost:3000)
+    [http://localhost:8080](http://localhost:8080)
 
-**Note:** If you want to reset the data to the initial mock data, simply delete the `db.json` file and restart the server.
+**Note:** The application is configured to connect to the Google Cloud project `my-tech-486713`. To reset the data, you will need to manually delete the `talks` and `categories` collections from the Firestore console.

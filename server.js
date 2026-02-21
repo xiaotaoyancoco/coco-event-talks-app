@@ -8,9 +8,10 @@ const PORT = process.env.PORT || 8080;
 
 // --- Firestore Setup ---
 const db = new Firestore({
-    projectId: 'my-tech-486713', // Make sure this matches your project ID
+    projectId: 'my-tech-486713',
 });
 const talksCollection = db.collection('talks');
+const categoriesCollection = db.collection('categories');
 
 
 // --- Mock Data Generation (for initial setup) ---
@@ -20,12 +21,11 @@ const daysAgo = (days) => {
     return date.toISOString().split('T')[0];
 };
 const generateDayOfTalks = (dateString) => {
-    // ... [Same data generation logic as before]
     const dailyTalks = [];
     let currentTime = new Date(`${dateString}T10:00:00`);
     const titles = ["Quantum Leap", "Resilient Microservices", "Modern Frontend", "Data Storytelling", "Cloud-Native Security", "Ethical AI"];
     const speakers = [["Dr. Reed"], ["J. Chen"], ["S. Wu"], ["D. Lee"], ["A. Khan"], ["Dr. Tanaka"]];
-    const categories = [["AI"], ["Backend"], ["Frontend"], ["Data"], ["Security"], ["Ethics"]];
+    const categories = [["AI", "ML"], ["Backend", "Architecture"], ["Frontend", "Web"], ["Data", "Analytics"], ["Security", "Cloud"], ["AI", "Ethics"]];
     for (let i = 0; i < 6; i++) {
         const startTime = new Date(currentTime);
         const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
@@ -35,7 +35,7 @@ const generateDayOfTalks = (dateString) => {
             endTime: endTime.toISOString(),
             title: titles[i],
             speakers: speakers[i],
-            categories: categories[i],
+            categories: categories[i % categories.length],
             description: "A deep dive into the patterns and practices."
         });
         currentTime.setTime(endTime.getTime() + (i === 2 ? 60 * 60 * 1000 : 10 * 60 * 1000));
@@ -47,48 +47,81 @@ const generateAllTalks = () => Array.from({ length: 7 }, (_, i) => generateDayOf
 
 // --- Database Initialization ---
 async function initializeDatabase() {
-    const snapshot = await talksCollection.limit(1).get();
-    if (snapshot.empty) {
-        console.log('Talks collection is empty. Populating with initial mock data...');
+    const talksSnapshot = await talksCollection.limit(1).get();
+    if (talksSnapshot.empty) {
+        console.log('Database is empty. Populating with initial mock data...');
         const initialTalks = generateAllTalks();
-        const batch = db.batch();
+        const talkBatch = db.batch();
         initialTalks.forEach(talk => {
-            const docRef = talksCollection.doc(); // Firestore generates an ID
-            batch.set(docRef, talk);
+            const docRef = talksCollection.doc();
+            talkBatch.set(docRef, talk);
         });
-        await batch.commit();
+        await talkBatch.commit();
+        
+        // Also populate the categories collection
+        const initialCategories = new Set(initialTalks.flatMap(talk => talk.categories));
+        const categoryBatch = db.batch();
+        initialCategories.forEach(categoryName => {
+            const docRef = categoriesCollection.doc(categoryName); // Use category name as ID for easy lookup
+            categoryBatch.set(docRef, { name: categoryName });
+        });
+        await categoryBatch.commit();
         console.log('Database initialized successfully.');
     }
 }
 
 // --- Server Endpoints ---
-// GET all talks
 app.get('/api/talks', async (req, res) => {
     const snapshot = await talksCollection.get();
     const talks = [];
-    snapshot.forEach(doc => {
-        talks.push({ id: doc.id, ...doc.data() });
-    });
+    snapshot.forEach(doc => talks.push({ id: doc.id, ...doc.data() }));
     res.json(talks);
 });
 
-// POST a new talk
+// NEW: Endpoint to get all unique categories
+app.get('/api/categories', async (req, res) => {
+    const snapshot = await categoriesCollection.get();
+    const categories = [];
+    snapshot.forEach(doc => categories.push(doc.data().name));
+    res.json(categories.sort());
+});
+
 app.post('/api/talks', async (req, res) => {
     const newTalk = req.body;
     if (!newTalk || !newTalk.title || !newTalk.date) {
         return res.status(400).json({ error: 'Invalid talk data provided.' });
     }
-    const docRef = await talksCollection.add(newTalk);
-    res.status(201).json({ id: docRef.id, ...newTalk });
+
+    // Use a transaction to save talk and update categories collection
+    try {
+        const talkRef = talksCollection.doc();
+        await db.runTransaction(async (transaction) => {
+            transaction.set(talkRef, newTalk);
+
+            // For each category in the new talk, check if it exists in the categories collection
+            for (const categoryName of newTalk.categories) {
+                const categoryRef = categoriesCollection.doc(categoryName);
+                const categoryDoc = await transaction.get(categoryRef);
+                if (!categoryDoc.exists) {
+                    transaction.set(categoryRef, { name: categoryName });
+                }
+            }
+        });
+        res.status(201).json({ id: talkRef.id, ...newTalk });
+    } catch (e) {
+        console.error("Transaction failure:", e);
+        res.status(500).json({ error: "Failed to save talk." });
+    }
 });
 
-// DELETE a talk by ID
 app.delete('/api/talks/:id', async (req, res) => {
+    // Note: This simplified version doesn't clean up orphan categories.
+    // A full implementation would require checking if any other talk uses the category
+    // before deleting it from the 'categories' collection, which is more complex.
     const talkId = req.params.id;
     await talksCollection.doc(talkId).delete();
     res.status(204).send();
 });
-
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));

@@ -8,32 +8,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const addTalkForm = document.getElementById('add-talk-form');
     const cancelTalkBtn = document.getElementById('cancel-talk-btn');
     const timeSelect = document.getElementById('talk-time');
-    // New Category Elements
     const categoryInput = document.getElementById('talk-category-input');
     const addCategoryBtn = document.getElementById('add-category-btn');
     const categoryDatalist = document.getElementById('category-datalist');
     const selectedCategoriesContainer = document.getElementById('selected-categories-container');
 
-
     // --- State and Constants ---
     let allTalks = [];
+    let allCategories = []; // Will be populated from API
     const ALL_SLOTS = ["10:00:00", "11:10:00", "12:20:00", "14:20:00", "15:30:00", "16:40:00"];
     const toYYYYMMDD = (date) => new Date(date).toISOString().split('T')[0];
-
-    // Helper function to format time as "HH:MM AM/PM" without timezone conversion
     const formatAsWallTime = (isoString) => {
-        const timePart = isoString.split('T')[1].substring(0, 5); // "HH:MM"
+        const timePart = isoString.split('T')[1].substring(0, 5);
         const [hours, minutes] = timePart.split(':');
         const numericHours = parseInt(hours, 10);
-        
         const ampm = numericHours >= 12 ? 'PM' : 'AM';
-        const formattedHours = numericHours % 12 || 12; // Convert 0 to 12 for 12 AM/PM
+        const formattedHours = numericHours % 12 || 12;
         return `${formattedHours}:${minutes} ${ampm}`;
     };
 
-
     // --- Initial Setup ---
-    fetchAndRender();
+    fetchAllInitialData();
 
     // --- Event Listeners ---
     categoryFilter.addEventListener('change', filterAndRender);
@@ -42,7 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
     cancelTalkBtn.addEventListener('click', hideAddTalkForm);
     addTalkForm.addEventListener('submit', handleFormSubmit);
     scheduleContainer.addEventListener('click', handleScheduleClick);
-    // New Category Listeners
     addCategoryBtn.addEventListener('click', addCategoryFromInput);
     categoryInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
@@ -52,13 +46,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     selectedCategoriesContainer.addEventListener('click', handleRemoveCategory);
 
-
     // --- Main Functions ---
-    function fetchAndRender() {
-        fetch('/api/talks').then(response => response.json()).then(talks => {
+    function fetchAllInitialData() {
+        Promise.all([
+            fetch('/api/talks').then(res => res.json()),
+            fetch('/api/categories').then(res => res.json())
+        ]).then(([talks, categories]) => {
             allTalks = talks.sort((a, b) => new Date(b.date) - new Date(a.date));
+            allCategories = categories;
             populateFilters();
             filterAndRender();
+        }).catch(error => {
+            console.error("Failed to fetch initial data:", error);
+            scheduleContainer.innerHTML = '<p style="text-align: center; color: red;">Failed to load data. Please try refreshing the page.</p>';
         });
     }
 
@@ -96,6 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Form & Action Handling ---
     function showAddTalkForm() {
+        populateCategoryDatalist(); // Ensure datalist is up-to-date
+        // ... (rest of the function is the same)
         const tomorrow = new Date();
         tomorrow.setDate(new Date().getDate() + 1);
         const tomorrowStr = toYYYYMMDD(tomorrow);
@@ -109,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const startTime = new Date(`${tomorrowStr}T${slot}`);
                 const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
                 option.value = slot;
-                // **UPDATED**: Use formatAsWallTime
                 option.textContent = `${formatAsWallTime(startTime.toISOString())} - ${formatAsWallTime(endTime.toISOString())}`;
                 timeSelect.appendChild(option);
             });
@@ -119,20 +120,24 @@ document.addEventListener('DOMContentLoaded', () => {
             option.disabled = true;
             timeSelect.appendChild(option);
         }
-        // Populate category datalist and clear selected container
-        populateCategoryDatalist();
         selectedCategoriesContainer.innerHTML = '';
         formOverlay.classList.remove('hidden');
     }
 
     function hideAddTalkForm() {
         addTalkForm.reset();
-        selectedCategoriesContainer.innerHTML = ''; // Clear selected categories on hide
+        selectedCategoriesContainer.innerHTML = '';
         formOverlay.classList.add('hidden');
     }
 
     async function handleFormSubmit(e) {
         e.preventDefault();
+        const categories = [...selectedCategoriesContainer.children].map(tag => tag.dataset.category);
+        if (categories.length === 0) {
+            alert('Please add at least one category.');
+            return;
+        }
+        // ... (rest of the form validation and object creation is the same)
         const tomorrow = new Date();
         tomorrow.setDate(new Date().getDate() + 1);
         const tomorrowStr = toYYYYMMDD(tomorrow);
@@ -141,13 +146,6 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('No available time slots to book.');
             return;
         }
-        // Get categories from the new UI
-        const categories = [...selectedCategoriesContainer.children].map(tag => tag.dataset.category);
-        if (categories.length === 0) {
-            alert('Please add at least one category.');
-            return;
-        }
-
         const startTime = new Date(`${tomorrowStr}T${selectedTime}`);
         const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
         const newTalk = {
@@ -170,7 +168,11 @@ document.addEventListener('DOMContentLoaded', () => {
             hideAddTalkForm();
             const savedTalk = await response.json();
             allTalks.unshift(savedTalk);
-            allTalks.sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            // Re-fetch categories in case a new one was added
+            const newCategories = await fetch('/api/categories').then(res => res.json());
+            allCategories = newCategories;
+
             populateFilters();
             filterAndRender();
         } catch (error) {
@@ -190,7 +192,13 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch(`/api/talks/${id}`, { method: 'DELETE' });
             if (!response.ok) throw new Error('Failed to delete the talk.');
+            
             allTalks = allTalks.filter(talk => talk.id !== id);
+            
+            // A category might have become an orphan, so re-fetch is safest
+            const newCategories = await fetch('/api/categories').then(res => res.json());
+            allCategories = newCategories;
+
             populateFilters();
             filterAndRender();
         } catch (error) {
@@ -211,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 tag.textContent = category;
                 const removeBtn = document.createElement('button');
                 removeBtn.className = 'remove-category-btn';
-                removeBtn.innerHTML = '&times;'; // 'x' symbol
+                removeBtn.innerHTML = '&times;';
                 tag.appendChild(removeBtn);
                 selectedCategoriesContainer.appendChild(tag);
             }
@@ -227,11 +235,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- UI Population & Element Creation ---
     function populateFilters() {
-        const allCategories = new Set();
-        allTalks.forEach(talk => talk.categories.forEach(category => allCategories.add(category)));
+        // Populate Categories from the cached global array
         const selectedCategory = categoryFilter.value;
         categoryFilter.innerHTML = '<option value="all">All Categories</option>';
-        [...allCategories].sort().forEach(category => {
+        allCategories.forEach(category => {
             const option = document.createElement('option');
             option.value = category;
             option.textContent = category;
@@ -239,8 +246,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         categoryFilter.value = selectedCategory;
 
-        const allDates = new Set();
-        allTalks.forEach(talk => allDates.add(talk.date));
+        // Populate Dates from the talks array
+        const allDates = new Set(allTalks.map(talk => talk.date));
         const selectedDate = dateFilter.value;
         dateFilter.innerHTML = '<option value="all">All Dates</option>';
         [...allDates].sort((a,b) => new Date(b) - new Date(a)).forEach(date => {
@@ -253,10 +260,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function populateCategoryDatalist() {
-        const allCategories = new Set();
-        allTalks.forEach(talk => talk.categories.forEach(category => allCategories.add(category)));
+        // Populate Datalist from the cached global array
         categoryDatalist.innerHTML = '';
-        [...allCategories].sort().forEach(category => {
+        allCategories.forEach(category => {
             const option = document.createElement('option');
             option.value = category;
             categoryDatalist.appendChild(option);
@@ -264,6 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function createTalkElement(talk) {
+        // ... (this function is the same, no changes needed)
         const item = document.createElement('div');
         item.className = 'schedule-item';
         const talkStartTime = new Date(talk.startTime);
